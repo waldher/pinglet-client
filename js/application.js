@@ -78,24 +78,21 @@ var add_message = function(message, before_message_uuid){
   return client_message_id;
 };
 
-var socket = io.connect("/chat");
-socket.emit("chats/connect", {"chat_id": window.location.pathname.slice(1), "chat_client_id": chat_system.chat_client_id});
-
-socket.on("chats/assign", function(data){
+var chat_assign = function(data){
   chat_system.chat_id = data.chat_id;
   window.history.pushState(undefined, undefined, data.chat_id);
   chat_system.chat_client_id = data.chat_client_id;
   localStorage.setItem("chat_client_id_" + chat_system.chat_id, chat_system.chat_client_id);
-});
+}
 
-socket.on("messages/receive", function(data){
+var message_receive = function(data){
   add_message(data);
   if(data.previous_message_uuid && $("#message-" + data.previous_message_uuid).length == 0){
-    socket.emit("messages/get", data.previous_message_uuid);
+    sockjs.send(pack_message("messages/get", data.previous_message_uuid));
   }
-});
+}
 
-socket.on("messages/acknowledge", function(data){
+var message_acknowledge = function(data){
   var message = $("#message-" + data.client_message_id);
   message.attr("id", "message-" + data.message_uuid);
   message.attr("x-previous-message-uuid", data.previous_message_uuid);
@@ -103,14 +100,33 @@ socket.on("messages/acknowledge", function(data){
   messageStatus.removeClass("messageStatusNotAcknowledged");
   messageStatus.addClass("messageStatusAcknowledged");
   $('#message-' + data.message_uuid + ' .messageTime').html((new Date(data.time)).toLocaleTimeString("en-GB"));
-});
+}
+
+var pack_message = function(channel, content){
+  return JSON.stringify({"channel": channel, "content": content});
+};
+
+var sockjs = new SockJS("/chat");
+sockjs.onopen = function() {
+  sockjs.send(pack_message("chats/join", {"chat_id": window.location.pathname.slice(1), "chat_client_id": chat_system.chat_client_id}));
+};
+sockjs.onmessage = function(raw_message){
+  var message = JSON.parse(raw_message.data);
+  if(message.channel == "chats/assign"){
+    chat_assign(message.content);
+  } else if(message.channel == "messages/acknowledge"){
+    message_acknowledge(message.content);
+  } else if(message.channel == "messages/receive") {
+    message_receive(message.content);
+  }
+};
 
 var sendMessage = function(){
   if($("#sendInput").val().trim().length > 0){
     var message_content = $("#sendInput").val();
     message_content = message_content.replace(new RegExp('\r?\n','gm'), "<br />\n");
     var client_message_id = add_message({"sender": chat_system.chat_client_id,"payload": message_content});
-    socket.emit("messages/create", {"client_message_id": client_message_id,"sender": chat_system.chat_client_id,"payload": message_content});
+    sockjs.send(pack_message("messages/create", {"client_message_id": client_message_id,"sender": chat_system.chat_client_id,"payload": message_content}));
     $("#sendInput").val('');
   }
   return false;
